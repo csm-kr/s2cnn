@@ -6,6 +6,8 @@ import numpy as np
 import argparse
 import lie_learn.spaces.S2 as S2
 from torchvision import datasets
+from utils import show_spheres, calculate_Rmatrix_from_phi_theta, rotate_map_given_R
+import cv2
 
 
 NORTHPOLE_EPSILON = 1e-3
@@ -98,6 +100,31 @@ def project_sphere_on_xy_plane(grid, projection_origin):
     return rx, ry
 
 
+def project_sphere_on_xy_plane_sun360(grid, projection_origin):
+    ''' returns xy coordinates on the plane
+    obtained from projecting each point of
+    the spherical grid along the ray from
+    the projection origin through the sphere '''
+
+    sx, sy, sz = projection_origin
+    x, y, z = grid
+    z = z.copy() + 1
+
+    t = -z / (z - sz)
+    qx = t * (x - sx) + x
+    qy = t * (y - sy) + y
+
+    xmin = 1/2 * (-1 - sx) + -1
+    ymin = 1/2 * (-1 - sy) + -1
+
+    # ensure that plane projection
+    # ends up on southern hemisphere
+    rx = (qx - xmin) / (2 * np.abs(xmin))
+    ry = (qy - ymin) / (2 * np.abs(ymin))
+
+    return rx, ry
+
+
 def sample_within_bounds(signal, x, y, bounds):
     ''' '''
     xmin, xmax, ymin, ymax = bounds
@@ -149,6 +176,19 @@ def sample_bilinear(signal, rx, ry):
 
 
 def project_2d_on_sphere(signal, grid, projection_origin=None):
+
+    # signal - 500, 28, 28
+    img_np = signal[:1, :, :]                           # 1, 28, 28
+    img_np = np.transpose(img_np, (1, 2, 0))            # 28, 28, 1
+
+    R = calculate_Rmatrix_from_phi_theta(0, 0)
+    map_x, map_y = rotate_map_given_R(R, 14 * 2, 14 * 2)
+    img_np = cv2.remap(img_np, map_x, map_y, cv2.INTER_CUBIC, borderMode=cv2.BORDER_TRANSPARENT)
+
+    img_np = img_np[np.newaxis, :, :]
+    # img_np = np.transpose(img_np, (2, 0, 1))            # 1, 28, 28
+    show_spheres(scale=2, points=grid, rgb=img_np)
+
     ''' '''
     if projection_origin is None:
         projection_origin = (0, 0, 2 + NORTHPOLE_EPSILON)
@@ -166,9 +206,30 @@ def project_2d_on_sphere(signal, grid, projection_origin=None):
     sample = (sample - sample_min) / (sample_max - sample_min)
     sample *= 255
     sample = sample.astype(np.uint8)
-
+    show_spheres(scale=2, points=grid, rgb=sample)
     return sample
 
+
+def project_2d_on_sphere_sun360(signal, grid, projection_origin=None):
+    ''' '''
+    if projection_origin is None:
+        projection_origin = (0, 0, 2 + NORTHPOLE_EPSILON)
+
+    rx, ry = project_sphere_on_xy_plane_sun360(grid, projection_origin)
+    sample = sample_bilinear(signal, rx, ry)
+
+    # ensure that only south hemisphere gets projected
+    # sample *= (grid[2] <= 1).astype(np.float64)
+
+    # rescale signal to [0,1]
+    sample_min = sample.min(axis=(1, 2)).reshape(-1, 1, 1)
+    sample_max = sample.max(axis=(1, 2)).reshape(-1, 1, 1)
+
+    sample = (sample - sample_min) / (sample_max - sample_min)
+    sample *= 255
+    sample = sample.astype(np.uint8)
+    show_spheres(scale=2, points=grid, rgb=sample)
+    return sample
 
 def main():
     ''' '''
@@ -177,7 +238,7 @@ def main():
     parser.add_argument("--bandwidth",
                         help="the bandwidth of the S2 signal",
                         type=int,
-                        default=30,
+                        default=14,
                         required=False)
     parser.add_argument("--noise",
                         help="the rotational noise applied on the sphere",
@@ -242,10 +303,10 @@ def main():
                 rotated_grid = rotate_grid(rot, grid)
             else:
                 rotated_grid = grid
-
             idxs = np.arange(current, min(n_signals,
                                           current + args.chunk_size))
             chunk = signals[idxs]
+            # projections[idxs] = project_2d_on_sphere(chunk, rotated_grid, projection_origin=(0, 0, 1))
             projections[idxs] = project_2d_on_sphere(chunk, rotated_grid)
             current += args.chunk_size
             print("\r{0}/{1}".format(current, n_signals), end="")

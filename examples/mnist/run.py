@@ -61,7 +61,7 @@ class S2ConvNet_original(nn.Module):
         f2 = 40
         f_output = 10
 
-        b_in = 30
+        b_in = 112
         b_l1 = 10
         b_l2 = 6
 
@@ -82,6 +82,14 @@ class S2ConvNet_original(nn.Module):
             b_out=b_l2,
             grid=grid_so3)
 
+        self.features = nn.Sequential(SO3Convolution(40, 40, b_l2, b_l2, grid_so3),
+                                      nn.ReLU(),
+                                      SO3Convolution(40, 40, b_l2, b_l2, grid_so3),
+                                      nn.ReLU(),
+                                      SO3Convolution(40, 40, b_l2, b_l2, grid_so3),
+                                      nn.ReLU(),
+                                      )
+
         self.out_layer = nn.Linear(f2, f_output)
 
     def forward(self, x):
@@ -90,9 +98,8 @@ class S2ConvNet_original(nn.Module):
         x = F.relu(x)
         x = self.conv2(x)
         x = F.relu(x)
-
+        x = self.features(x)
         x = so3_integrate(x)
-
         x = self.out_layer(x)
 
         return x

@@ -1,15 +1,6 @@
-import os
-import cv2
-import glob
-import torch
+from numba import jit
 import numpy as np
-import torch.utils.data as data
-# import utils
-# from vmf import VonMisesFisher
-# from utils import normalize, cartesian_to_spherical, spherical_to_cartesian
 import matplotlib.pyplot as plt
-# from mpl_toolkits.mplot3d import axes3d
-
 visualization = True
 
 
@@ -71,117 +62,212 @@ def show_spheres(scale, points, rgb, label=None):
     plt.show()
 
 
-class Sphere_Dataset(data.Dataset):
-    def __init__(self,
-                 root='D:\Data\\360_data',
-                 num_points=91,
-                 kappa=25,
-                 num_hops=2,
-                 split='TRAIN'):
-        """
-        set sp dataset
-        :param root: root directory
-        :param transform: dataset torchvision transform
-        """
-        # super(Sphere_Dataset, self).__init__()
-        super().__init__()
-        self.root = root
-        self.split = split
-        assert self.split in ['TRAIN', 'TEST', 'VAL']
-        self.split_root = os.path.join(self.root, self.split.lower())
-        self.img_list = glob.glob(os.path.join(self.split_root, '*.jpg'))
-        self.top_k = 6
-        self.num_hops = num_hops
-        self.kappa = kappa
-        self.points = np.load('./uniform_points/91_uniform_points.npy')
-        self.num_points = num_points
+def rotate_map_given_R(R, height, width):
+    # Inputs:
+    #       phi,theta in degrees , height and width of an image
+    # output:
+    #       rotation map for x and y coordinate
+    # goal:
+    #       calculating rotation map for corresponding image dimension and phi,theta value.
+    #       (1,0,0)(rho,phi,theta) on sphere goes to (1,phi,theta)
 
-    def create_adj(self):
+    def pos_conversion(x, y, z):
+        # given postech protocol
+        # return my protocol
 
-        top_k = self.top_k
-        adj = np.load('./hop_adj/{}_{}_hop_adj_top_{}.npy'.format(self.num_points, self.num_hops, top_k))
-        adj = normalize(adj)
-        return adj
+        return z, -x, y
 
-    def __getitem__(self, idx):
+    def inv_conversion(x, y, z):
+        # given my conversion
+        # convert it to postech system.
 
-        # read image
-        img = cv2.imread(self.img_list[idx])
-        height, width, _ = img.shape
+        return -y, z, x
 
-        # make rotate
-        phi = np.random.randint(0, 180)
-        theta = np.random.randint(0, 360)
-        phi = 0
-        theta = 0
-        map_matrix_dir = os.path.join(self.root, 'map_xy')
-        map_x_path = map_matrix_dir + '/' + str('%03d' % phi) + '_' + str('%03d' % theta) + '_x.npy'
-        map_y_path = map_matrix_dir + '/' + str('%03d' % phi) + '_' + str('%03d' % theta) + '_y.npy'
+    # if not original_file.is_file():
+    # step1
+    spherePoints = flat_to_sphere(height, width)
+    # R = calculate_Rmatrix_from_phi_theta(phi,theta)
+    R_inv = np.linalg.inv(R)
 
-        if os.path.isfile(map_x_path) and os.path.isfile(map_y_path):  # if map_x and map_y both exist
-            map_x = np.load(map_x_path)
-            map_y = np.load(map_y_path)
+    #step2
+    spherePointsRotated = rotate_sphere_given_phi_theta(R_inv, spherePoints)
 
-        rotated_img = cv2.remap(img, map_x, map_y, cv2.INTER_CUBIC, borderMode=cv2.BORDER_TRANSPARENT)
-        rotated_img_vis = rotated_img  # for visualization
-        rotated_img = cv2.resize(rotated_img, (442, 221))
+    #Create two mapping variable
+    #step3
+    [map_x, map_y] = sphere_to_flat(spherePointsRotated, height, width)
 
-        # mean
-        imagenet_mean_R = 103.939
-        imagenet_mean_G = 116.779
-        imagenet_mean_B = 123.68
-
-        rotated_img[:, :, 0] = rotated_img[:, :, 0] - imagenet_mean_B
-        rotated_img[:, :, 1] = rotated_img[:, :, 1] - imagenet_mean_G
-        rotated_img[:, :, 2] = rotated_img[:, :, 2] - imagenet_mean_R
-
-        # get ground truth angle
-        gt_phi, gt_theta = phi, theta
-
-        # get xyz
-        gt_xyz = spherical_to_cartesian(gt_phi, gt_theta)
-
-        # von mises fisher distribution
-        mu = gt_xyz
-        kappa = self.kappa
-        vmf = VonMisesFisher(mu=mu, kappa=kappa)
-        pdfs = vmf.pdfs(self.points).transpose()
-        sum_of_pdfs = np.sum(pdfs)
-        gt_pdfs = pdfs / sum_of_pdfs  # (91, 1)
-
-        # visualization
-        if visualization:
-
-            cv2.imshow('origin_img', cv2.resize(img, (442, 221)))
-            cv2.imshow('rotate_img', cv2.resize(rotated_img_vis, (442, 221)))
-            print('phi : {}, theta : {}'.format(gt_phi, gt_theta))
-            show_spheres(scale=1, points=self.points, rgb=pdfs, label=gt_xyz)
-            cv2.waitKey(0)
-
-        # prepare to convert numpy to tensor
-        rotated_img = rotated_img.astype(np.float32)
-        rotated_img = np.transpose(rotated_img, (2, 0, 1))
-        rotated_img = torch.FloatTensor(rotated_img)
-        rotated_img = rotated_img.float().div(255)
-
-        # convert angle(scalar)/xy to tensor
-        gt_phi = torch.FloatTensor([gt_phi])
-        gt_theta = torch.FloatTensor([gt_theta])
-        gt_xyz = torch.FloatTensor([gt_xyz])
-        adj = self.create_adj()
-
-        rotated_points = self.points.astype(np.float32)
-        return rotated_img, gt_phi, gt_theta, gt_xyz, gt_pdfs, adj, rotated_points
-
-    def __len__(self):
-        return len(self.img_list)
+    # dst(y,x) = src(map_x(y,x),map_y(y,x))
+    return [map_x, map_y]
 
 
-if __name__ == "__main__":
+@jit(nopython=True, cache=True)
+def flat_to_sphere(height, width):
+    # Input:
+    #      height and width of image
+    # Output:
+    #      return (height,width,3) numpy ndarray. (y,x) of array has (x,y,z) value which is on sphere.
+    # Goal:
+    #      return sphere points
+    # Create matrix that contains x,y,z coordinates
 
-    sp_dataset = Sphere_Dataset(split='VAL')
-    sp_loader = data.DataLoader(dataset=sp_dataset,
-                                batch_size=2)
+    sphere = np.zeros((height, width, 3))
+    x_to_theta = np.zeros(width)
+    y_to_phi = np.zeros(height)
 
-    for (rotated_img, gt_phi, gt_theta, gt_xyz, gt_pdfs, _, _) in sp_loader:
-        print(rotated_img.shape)
+    theta_slope = 2*np.pi/(width-1)
+    phi_slope = np.pi/(height-1)
+
+    # linear map from [y,x] to [phi,theta]
+    for x in range(0, width):
+        x_to_theta[x] = np.rad2deg(np.multiply(x, theta_slope))
+
+    for y in range(0, height):
+        y_to_phi[y] = np.rad2deg(np.multiply(y, phi_slope))
+
+    # For every pixel coordinates, create a matrix that contains the
+    # corresponding (x,y,z) coordinates
+    for y_f in range(0, height):
+        for x_f in range(0, width):
+            theta = x_to_theta[x_f]
+            phi = y_to_phi[y_f]
+
+            phi = np.deg2rad(phi)
+            theta = np.deg2rad(theta)
+            x_s = np.sin(phi) * np.cos(theta)
+            y_s = np.sin(phi) * np.sin(theta)
+            z_s = np.cos(phi)
+            sphere[y_f, x_f, 0] = x_s
+            sphere[y_f, x_f, 1] = y_s
+            sphere[y_f, x_f, 2] = z_s
+
+    return sphere
+
+
+@jit(nopython=True, cache=True)
+def rotate_sphere_given_phi_theta(R, spherePoints):
+    # Input:
+    #       phi,theta in degrees and spherePoints(x,y,z of on sphere dimension (height,width,3) )
+    # Output:
+    #       spherePointsRotated of which dimension is (h,w,3) and contains (x',y',z' )
+    #  (x',y',z')=R*(x,y,z) where R maps (0,0,1) to (vx,vy,vz) defined by theta,phi (i.e. R*(0,0,1)=(vx,vy,vz))
+    # Goal:
+    #      apply R to every point on sphere
+
+    h, w, c = spherePoints.shape
+    spherePointsRotated = np.zeros((h, w, c),dtype=np.float64)
+
+    for y in range(0, h):
+        for x in range(0, w):
+            pointOnSphere = spherePoints[y, x, :]
+            pointOnSphereRotated = np.dot(R, pointOnSphere)
+            spherePointsRotated[y, x, :] = pointOnSphereRotated
+            # spherePointsRotated[y, x, :] = np.dot(R, pointOnSphere)
+
+    return spherePointsRotated
+
+
+@jit(nopython=True, cache=True)
+def calculate_Rmatrix_from_phi_theta(phi, theta):
+    """
+    A = [0,0,1] B = [x,y,z] ( = phi,theta) the goal is to find rotation matrix R where R*A == B
+    please refer to this website https://math.stackexchange.com/questions/180418/calculate-rotation-matrix-to-align-vector-a-to-vector-b-in-3d
+    v = a cross b ,s = ||v|| (sine of angle), c = a dot b (cosine of angle)
+    :param phi: z 축 각도
+    :param theta: xy 축 각도
+    :return: rotation matrix that moves [0,0,1] to ([x,y,z] that is equivalent to (phi,theta))
+    """
+
+    epsilon = 1e-7
+    A = np.array([0, 0, 1], dtype=np.float64)  # original up-vector
+    # B = spherical_to_cartesian(phi,theta)  # target vector
+
+    phi = np.deg2rad(phi)
+    theta = np.deg2rad(theta)
+    x = np.sin(phi) * np.cos(theta)
+    y = np.sin(phi) * np.sin(theta)
+    z = np.cos(phi)
+    B = np.array([x, y, z], dtype=np.float64)
+
+    desiredResult = B
+    # dot(R,A) == B
+    # If A == B then return identity(3)
+    if A[0] - B[0] < epsilon \
+            and A[0] - B[0] > -epsilon \
+            and A[1] - B[1] < epsilon \
+            and A[1] - B[1] > -epsilon \
+            and A[2] - B[2] < epsilon \
+            and A[2] - B[2] > -epsilon:
+        # print('Identity matrix is returned')
+        return np.identity(3)
+
+    # v = np.cross(A, B)
+    # In the numba, numpy.cross is not supported
+    cross_1 = np.multiply(A[1],B[2])-np.multiply(A[2],B[1])
+    cross_2 = np.multiply(A[2],B[0])-np.multiply(A[0],B[2])
+    cross_3 = np.multiply(A[0],B[1])-np.multiply(A[1],B[0])
+    v = np.array([cross_1,cross_2,cross_3])
+
+    c = np.dot(A, B)
+    skewSymmetric = skewSymmetricCrossProduct(v)
+
+    if -epsilon < c + 1 and c + 1 < epsilon:
+        R = -np.identity(3)
+    else:
+        R = np.identity(3) + skewSymmetric + np.dot(skewSymmetric, skewSymmetric) * (
+                    1 / (1 + c))  # what if 1+c is 0?
+    return R
+
+
+@jit(nopython=True, cache=True)
+def skewSymmetricCrossProduct(v):
+    # Input:
+    #   a vector in R^3
+    # Output:
+    #   [ 0 -v3 v2 ; v3 0 -v1; -v2 v1 0]
+    v1 = v[0]
+    v2 = v[1]
+    v3 = v[2]
+
+    skewSymmetricMatrix = np.array([[0, -v3, v2], [v3, 0, -v1], [-v2, v1, 0]], dtype=np.float64)
+
+    return skewSymmetricMatrix
+
+
+@jit(nopython=True, cache=True)
+def sphere_to_flat(spherePointsRotated, height, width):
+    # Input:
+    #       y,x coordinate on 2d flat image,numpy nd array of dimension (height,width,3). ndarray(y,x) has x,y,z value on sphere ,height and width of an image
+    # Output:
+    #       x,y coordinate of 2d flat image
+    # Goal:
+    #       calculate destination x,y coordinate given information x,y(2d flat) <-> x,y,z(sphere)
+    map_y = np.zeros((height, width), dtype=np.float32)
+    map_x = np.zeros((height, width), dtype=np.float32)
+
+    factor_phi = (height-1)/np.pi
+    factor_theta = (width-1)/(2*np.pi)
+
+    # Get multiplied(by inverted rotation matrix) x,y,z coordinates
+    for image_y in range(0, height):
+        for image_x in range(0, width):
+            pointOnRotatedSphere_x = spherePointsRotated[image_y, image_x, 0]
+            pointOnRotatedSphere_y = spherePointsRotated[image_y, image_x, 1]
+            pointOnRotatedSphere_z = spherePointsRotated[image_y, image_x, 2]
+
+            x_2 = np.power(pointOnRotatedSphere_x, 2)
+            y_2 = np.power(pointOnRotatedSphere_y, 2)
+            z_2 = np.power(pointOnRotatedSphere_z, 2)
+
+            theta = float(np.arctan2(pointOnRotatedSphere_y, pointOnRotatedSphere_x))
+            # atan2 returns value of which range is [-pi,pi], range of theta is [0,2pi] so if theta is negative value,actual value is theta+2pi
+            if theta < 0:
+                theta = theta + np.multiply(2, np.pi)
+
+            rho = x_2 + y_2 + z_2
+            rho = np.sqrt(rho)
+            phi = np.arccos(pointOnRotatedSphere_z / rho)
+
+            map_y[image_y, image_x] = phi*factor_phi
+            map_x[image_y, image_x] = theta*factor_theta
+
+    return [map_x, map_y]

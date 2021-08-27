@@ -28,7 +28,7 @@ class S2ConvNet_original(nn.Module):
         f1 = 20
         f2 = 40
         f_output = 10
-        # 30, 15 일때, 무지 오래걸림
+        # 30, 15 일때, 무지 오래걸림 -> 64.29 % 성능
         b_in = bandwidth
         b_l1 = 15                # original 15
         b_l2 = 10                # original 10

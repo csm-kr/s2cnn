@@ -175,19 +175,56 @@ def sample_bilinear(signal, rx, ry):
     return (iy1 - ry) * fx1 + (ry - iy0) * fx2
 
 
-def project_2d_on_sphere(signal, grid, projection_origin=None):
+def project_2d_on_sphere_new(signal, grid, chunk_labels, rotation_matrix=None):
 
     # signal - 500, 28, 28
-    img_np = signal[:1, :, :]                           # 1, 28, 28
-    img_np = np.transpose(img_np, (1, 2, 0))            # 28, 28, 1
+    # img_np = signal[:1, :, :]                           # 1, 28, 28
+    img_np = signal                                     # 500, 28, 28
+    # img_np = np.transpose(img_np, (1, 2, 0))            # 28, 28, 1
 
-    R = calculate_Rmatrix_from_phi_theta(0, 0)
-    map_x, map_y = rotate_map_given_R(R, 14 * 2, 14 * 2)
-    img_np = cv2.remap(img_np, map_x, map_y, cv2.INTER_CUBIC, borderMode=cv2.BORDER_TRANSPARENT)
-
-    img_np = img_np[np.newaxis, :, :]
+    # R = calculate_Rmatrix_from_phi_theta(0, 0)
+    # R = rotation_matrix
+    # map_x, map_y = rotate_map_given_R(R, 14 * 2, 14 * 2)
+    # img_np = cv2.remap(img_np, map_x, map_y, cv2.INTER_CUBIC, borderMode=cv2.BORDER_TRANSPARENT)
+    # img_np = img_np[np.newaxis, :, :]
     # img_np = np.transpose(img_np, (2, 0, 1))            # 1, 28, 28
-    show_spheres(scale=2, points=grid, rgb=img_np)
+    sample = img_np.astype(np.uint8)
+    show_spheres(scale=2, points=grid, rgb=sample, label=chunk_labels[0])
+
+    ''' '''
+    # projection_origin = (0, 0, 2 + NORTHPOLE_EPSILON)
+    #
+    # rx, ry = project_sphere_on_xy_plane(grid, projection_origin)
+    # sample = sample_bilinear(signal, rx, ry)
+    #
+    # # ensure that only south hemisphere gets projected
+    # sample *= (grid[2] <= 1).astype(np.float64)
+    #
+    # # rescale signal to [0,1]
+    # sample_min = sample.min(axis=(1, 2)).reshape(-1, 1, 1)
+    # sample_max = sample.max(axis=(1, 2)).reshape(-1, 1, 1)
+    #
+    # sample = (sample - sample_min) / (sample_max - sample_min)
+    # sample *= 255
+    # sample = sample.astype(np.uint8)
+    # show_spheres(scale=2, points=grid, rgb=sample)
+    return sample
+
+
+def project_2d_on_sphere(signal, grid, projection_origin=None, rotation_matrix=None):
+
+    # signal - 500, 28, 28
+    # img_np = signal[:1, :, :]                           # 1, 28, 28
+    # img_np = np.transpose(img_np, (1, 2, 0))            # 28, 28, 1
+    #
+    # # R = calculate_Rmatrix_from_phi_theta(0, 0)
+    # R = rotation_matrix
+    # map_x, map_y = rotate_map_given_R(R, 14 * 2, 14 * 2)
+    # img_np = cv2.remap(img_np, map_x, map_y, cv2.INTER_CUBIC, borderMode=cv2.BORDER_TRANSPARENT)
+    #
+    # img_np = img_np[np.newaxis, :, :]
+    # # img_np = np.transpose(img_np, (2, 0, 1))            # 1, 28, 28
+    # show_spheres(scale=2, points=grid, rgb=img_np)
 
     ''' '''
     if projection_origin is None:
@@ -206,7 +243,7 @@ def project_2d_on_sphere(signal, grid, projection_origin=None):
     sample = (sample - sample_min) / (sample_max - sample_min)
     sample *= 255
     sample = sample.astype(np.uint8)
-    show_spheres(scale=2, points=grid, rgb=sample)
+    # show_spheres(scale=2, points=grid, rgb=sample)
     return sample
 
 
@@ -238,7 +275,7 @@ def main():
     parser.add_argument("--bandwidth",
                         help="the bandwidth of the S2 signal",
                         type=int,
-                        default=14,
+                        default=30,
                         required=False)
     parser.add_argument("--noise",
                         help="the rotational noise applied on the sphere",
@@ -291,6 +328,7 @@ def main():
         print("projecting {0} data set".format(label))
         current = 0
         signals = data['images'].reshape(-1, 28, 28).astype(np.float64)
+        labels = data['labels']
         n_signals = signals.shape[0]
         projections = np.ndarray(
             (signals.shape[0], 2 * args.bandwidth, 2 * args.bandwidth),
@@ -306,8 +344,12 @@ def main():
             idxs = np.arange(current, min(n_signals,
                                           current + args.chunk_size))
             chunk = signals[idxs]
-            # projections[idxs] = project_2d_on_sphere(chunk, rotated_grid, projection_origin=(0, 0, 1))
+            chunk_labels = labels[idxs]
             projections[idxs] = project_2d_on_sphere(chunk, rotated_grid)
+            # projections[idxs] = project_2d_on_sphere(chunk, rotated_grid, projection_origin=(0, 0, 1))
+            # projections[idxs] = project_2d_on_sphere(chunk, rotated_grid, rotation_matrix=rot)
+            # projections[idxs] = project_2d_on_sphere_new(chunk, rotated_grid, chunk_labels, rotation_matrix=rot)
+            # projections[idxs] = project_2d_on_sphere_new(chunk, rotated_grid, chunk_labels)
             current += args.chunk_size
             print("\r{0}/{1}".format(current, n_signals), end="")
         print("")

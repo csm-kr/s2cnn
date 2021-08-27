@@ -12,6 +12,10 @@ def show_spheres(scale, points, rgb, label=None):
     :param rgb:
     :return:
     """
+    if label is not None:
+        print('')
+        print(label)
+
     points = np.stack([points[0].reshape(-1), points[1].reshape(-1), points[2].reshape(-1)], axis=1)
 
     fig = plt.figure()
@@ -29,23 +33,28 @@ def show_spheres(scale, points, rgb, label=None):
     # ax.grid(False)
     ax.plot([0, scale * x], [0, scale * y], [0, scale * z])
 
-    if label is not None:
-        x, y, z = label
+    # if label is not None:
+    #     x, y, z = label
+    #
+    #     # label
+    #     ax.grid(False)
+    #     ax.plot([0, scale * x], [0, scale * y], [0, scale * z])
+    #
+    #     # how rotate they are
+    #     phi2 = np.arctan2(y, x) * 180 / np.pi
+    #     theta = np.arccos(z) * 180 / np.pi
+    #
+    #     if phi2 < 0:
+    #         phi2 = 360 + phi2
 
-        # label
-        ax.grid(False)
-        ax.plot([0, scale * x], [0, scale * y], [0, scale * z])
-
-        # how rotate they are
-        phi2 = np.arctan2(y, x) * 180 / np.pi
-        theta = np.arccos(z) * 180 / np.pi
-
-        if phi2 < 0:
-            phi2 = 360 + phi2
-
-    rgb = rgb[0].reshape(-1)
-    rgb = (rgb - np.min(rgb)) / (np.max(rgb) - np.min(rgb))
-    rgb = np.stack([rgb, rgb, rgb], axis=1)
+    r = rgb[0].reshape(-1)
+    g = rgb[1].reshape(-1)
+    b = rgb[2].reshape(-1)
+    # rgb 0~1 scale
+    r = (r - np.min(r)) / (np.max(r) - np.min(r))
+    g = (g - np.min(g)) / (np.max(g) - np.min(g))
+    b = (b - np.min(b)) / (np.max(b) - np.min(b))
+    rgb = np.stack([r, g, b], axis=1)
 
     ax.scatter(points[:, 0], points[:, 1], points[:, 2], facecolors=rgb, alpha=1, depthshade=False,
                edgecolors=None,
